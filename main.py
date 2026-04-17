@@ -6,7 +6,6 @@ import random
 
 TOKEN = "8751370568:AAERob2JxbvqvUIg_eQWakXEGQANuYd7x_A"
 CHANNEL = "@voltmusical"
-ADMIN_ID = 8307540389
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -30,23 +29,6 @@ def save_json(file, data):
 
 data = load_json(DATA_FILE, {})
 tracks = load_json(TRACKS_FILE, [])
-
-
-# ================= SAVE TRACKS FROM CHANNEL =================
-@bot.channel_post_handler(content_types=['audio'])
-def save_music(message):
-    if message.chat.username != CHANNEL.replace("@", ""):
-        return
-
-    track = {
-        "title": message.audio.title or "Unknown",
-        "file_id": message.audio.file_id
-    }
-
-    tracks.append(track)
-    save_json(TRACKS_FILE, tracks)
-
-    print("Saved:", track["title"])
 
 
 # ================= SUB CHECK =================
@@ -76,28 +58,52 @@ def start(message):
     if not is_subscribed(message.chat.id):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📢 Підписатись", url=f"https://t.me/{CHANNEL.replace('@','')}"))
-        markup.add(types.InlineKeyboardButton("🔄 Перевірити", callback_data="check"))
+        markup.add(types.InlineKeyboardButton("✅ Я підписан(а)", callback_data="check"))
 
-        bot.send_message(message.chat.id, "❗ Підпишись на канал", reply_markup=markup)
+        bot.send_message(
+            message.chat.id,
+            "❗ Щоб користуватись ботом, потрібно підписатись на канал",
+            reply_markup=markup
+        )
         return
 
-    bot.send_message(message.chat.id, "🎧 Volt Music Bot", reply_markup=menu())
+    bot.send_message(message.chat.id, "✅ Готово", reply_markup=menu())
 
 
 # ================= CHECK =================
 @bot.callback_query_handler(func=lambda c: c.data == "check")
 def check(call):
     if is_subscribed(call.message.chat.id):
-        bot.send_message(call.message.chat.id, "✅ Доступ відкрито /start")
+        bot.send_message(call.message.chat.id, "✅ Готово", reply_markup=menu())
     else:
-        bot.send_message(call.message.chat.id, "❌ Не підписаний")
+        bot.send_message(call.message.chat.id, "❌ Ти не підписаний")
+
+
+# ================= ADD MUSIC (FORWARD) =================
+@bot.message_handler(content_types=['audio'])
+def add_music(message):
+    if not message.forward_from_chat:
+        return
+
+    if message.forward_from_chat.username != CHANNEL.replace("@", ""):
+        return
+
+    track = {
+        "title": message.audio.title or "Unknown",
+        "file_id": message.audio.file_id
+    }
+
+    tracks.append(track)
+    save_json(TRACKS_FILE, tracks)
+
+    bot.send_message(message.chat.id, f"✅ Додано: {track['title']}")
 
 
 # ================= PLAYER =================
 @bot.message_handler(func=lambda m: m.text == "🎧 Плеєр")
 def player(message):
     if not tracks:
-        bot.send_message(message.chat.id, "❌ Нема музики в каналі")
+        bot.send_message(message.chat.id, "❌ Нема музики")
         return
 
     uid = str(message.chat.id)
@@ -129,6 +135,36 @@ def send_track(chat_id):
     bot.send_message(chat_id, f"🎵 {track['title']}", reply_markup=markup)
 
 
+# ================= BUTTONS =================
+@bot.callback_query_handler(func=lambda c: c.data in ["next", "prev", "play", "like"])
+def buttons(call):
+    uid = str(call.message.chat.id)
+    state = data.get(uid)
+
+    if not state:
+        return
+
+    queue = state["queue"]
+
+    if call.data == "next":
+        state["index"] = (state["index"] + 1) % len(queue)
+
+    elif call.data == "prev":
+        state["index"] = (state["index"] - 1) % len(queue)
+
+    elif call.data == "like":
+        t = queue[state["index"]]
+        state["likes"].append(t["title"])
+        bot.send_message(uid, "❤️ saved")
+
+    elif call.data == "play":
+        t = queue[state["index"]]
+        bot.send_audio(uid, t["file_id"], title=t["title"])
+
+    save_json(DATA_FILE, data)
+    send_track(uid)
+
+
 # ================= RANDOM =================
 @bot.message_handler(func=lambda m: m.text == "🎲 Random")
 def random_track(message):
@@ -137,7 +173,6 @@ def random_track(message):
         return
 
     limit = len(tracks) if is_premium(str(message.chat.id)) else 5
-
     t = random.choice(tracks[:limit])
 
     bot.send_audio(message.chat.id, t["file_id"], title=t["title"])
@@ -196,36 +231,6 @@ def success(message):
     save_json(DATA_FILE, data)
 
     bot.send_message(message.chat.id, "💎 Premium активовано!")
-
-
-# ================= BUTTONS =================
-@bot.callback_query_handler(func=lambda c: True)
-def buttons(call):
-    uid = str(call.message.chat.id)
-    state = data.get(uid)
-
-    if not state:
-        return
-
-    queue = state["queue"]
-
-    if call.data == "next":
-        state["index"] = (state["index"] + 1) % len(queue)
-
-    elif call.data == "prev":
-        state["index"] = (state["index"] - 1) % len(queue)
-
-    elif call.data == "like":
-        t = queue[state["index"]]
-        state["likes"].append(t["title"])
-        bot.send_message(uid, "❤️ saved")
-
-    elif call.data == "play":
-        t = queue[state["index"]]
-        bot.send_audio(uid, t["file_id"], title=t["title"])
-
-    save_json(DATA_FILE, data)
-    send_track(uid)
 
 
 # ================= RUN =================
