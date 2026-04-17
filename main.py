@@ -4,25 +4,30 @@ import requests
 import json
 import base64
 import random
+import time
 from datetime import datetime, timedelta
 
 TOKEN = "8751370568:AAERob2JxbvqvUIg_eQWakXEGQANuYd7x_A"
 CHANNEL = "@voltmusical"
 ADMIN_ID = 8307540389
 
-SPOTIFY_CLIENT_ID = "YOUR_CLIENT_ID"
+SPOTIFY_CLIENT_ID = "YOUR_ID"
 SPOTIFY_CLIENT_SECRET = "YOUR_SECRET"
 
 bot = telebot.TeleBot(TOKEN)
 
 DATA_FILE = "data.json"
+user_game = {}
+
+SPOTIFY_TOKEN = None
+SPOTIFY_TIME = 0
 
 
 # ================= DATA =================
 def load():
     try:
         with open(DATA_FILE, "r") as f:
-            return json.load(f)
+            return json.loads(f.read() or "{}")
     except:
         return {}
 
@@ -33,29 +38,30 @@ def save(data):
 data = load()
 
 
-# ================= USER INIT =================
+# ================= USER =================
 def init(uid):
     uid = str(uid)
-
     if uid not in data:
         data[uid] = {
             "premium_until": None,
-            "likes": [],
             "searches": 0,
+            "last_reset": str(datetime.now().date()),
+            "likes": [],
+            "history": [],
             "autoplay": False,
-            "history": []
+            "friends": []
         }
 
 
-# ================= USERS COUNT =================
+# ================= USERS =================
 def total_users():
     return len(data)
 
 
-# ================= SUB CHECK =================
-def is_subscribed(user_id):
+# ================= SUB =================
+def is_subscribed(uid):
     try:
-        m = bot.get_chat_member(CHANNEL, user_id)
+        m = bot.get_chat_member(CHANNEL, uid)
         return m.status in ["member", "administrator", "creator"]
     except:
         return False
@@ -63,11 +69,11 @@ def is_subscribed(user_id):
 
 # ================= PREMIUM =================
 def is_premium(uid):
-    user = data[uid]
-    if not user.get("premium_until"):
+    u = data[uid]
+    if not u.get("premium_until"):
         return False
     try:
-        return datetime.strptime(user["premium_until"], "%Y-%m-%d") > datetime.now()
+        return datetime.strptime(u["premium_until"], "%Y-%m-%d") > datetime.now()
     except:
         return False
 
@@ -79,9 +85,31 @@ def add_premium(uid, days=30):
     save(data)
 
 
+# ================= RESET =================
+def reset(uid):
+    u = data[uid]
+    if u["last_reset"] != str(datetime.now().date()):
+        u["searches"] = 0
+        u["last_reset"] = str(datetime.now().date())
+
+
+# ================= LIMIT =================
+def can_search(uid):
+    init(uid)
+    reset(uid)
+    return is_premium(uid) or data[uid]["searches"] < 5
+
+
 # ================= SPOTIFY TOKEN =================
-def spotify_token():
-    auth = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
+def get_token():
+    global SPOTIFY_TOKEN, SPOTIFY_TIME
+
+    if SPOTIFY_TOKEN and time.time() - SPOTIFY_TIME < 3500:
+        return SPOTIFY_TOKEN
+
+    auth = base64.b64encode(
+        f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()
+    ).decode()
 
     r = requests.post(
         "https://accounts.spotify.com/api/token",
@@ -89,10 +117,22 @@ def spotify_token():
         data={"grant_type": "client_credentials"}
     )
 
-    return r.json()["access_token"]
+    SPOTIFY_TOKEN = r.json().get("access_token")
+    SPOTIFY_TIME = time.time()
+
+    return SPOTIFY_TOKEN
 
 
-SPOTIFY = spotify_token()
+# ================= SEARCH =================
+def search_spotify(q):
+    token = get_token()
+
+    r = requests.get(
+        f"https://api.spotify.com/v1/search?q={q}&type=track&limit=5",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    return r.json()["tracks"]["items"]
 
 
 # ================= MENU =================
@@ -100,15 +140,15 @@ def menu():
     m = types.ReplyKeyboardMarkup(resize_keyboard=True)
     m.add("🔎 Пошук", "❤️ Лайки")
     m.add("🎧 Автоплей", "🧠 Рекомендації")
-    m.add("📊 Статистика", "💎 Premium")
+    m.add("🎮 Гра", "📊 Статистика", "💎 Premium")
     return m
 
 
-# ================= ADMIN LOG =================
+# ================= LOG START =================
 def log_start(user):
     bot.send_message(
         ADMIN_ID,
-        f"👤 START\nID: {user.id}\n@{user.username}\n{user.first_name}"
+        f"👤 START\nID:{user.id}\n@{user.username}\n{user.first_name}"
     )
 
 
@@ -120,17 +160,15 @@ def start(message):
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("📢 Підписатись", url=f"https://t.me/{CHANNEL.replace('@','')}"))
         kb.add(types.InlineKeyboardButton("✅ Я підписаний", callback_data="check"))
-
-        bot.send_message(message.chat.id, "❗ Підпишись на канал", reply_markup=kb)
+        bot.send_message(message.chat.id, "❗ Підпишись", reply_markup=kb)
         return
 
     init(message.chat.id)
-
     log_start(message.from_user)
 
     bot.send_message(
         message.chat.id,
-        f"🎧 VOLT MUSIC 9.0\n👥 Users: {total_users()}",
+        f"🎧 VOLT MUSIC 10.0\n👥 Users: {total_users()}",
         reply_markup=menu()
     )
 
@@ -139,38 +177,32 @@ def start(message):
 @bot.callback_query_handler(func=lambda c: c.data == "check")
 def check(call):
     if is_subscribed(call.message.chat.id):
-        bot.send_message(call.message.chat.id, "✅ Готово", reply_markup=menu())
+        bot.send_message(call.message.chat.id, "✅ OK", reply_markup=menu())
     else:
         bot.send_message(call.message.chat.id, "❌ Нема підписки")
 
 
-# ================= SEARCH SPOTIFY =================
-def search_spotify(query):
-    r = requests.get(
-        f"https://api.spotify.com/v1/search?q={query}&type=track&limit=5",
-        headers={"Authorization": f"Bearer {SPOTIFY}"}
-    )
-    return r.json()["tracks"]["items"]
-
-
 # ================= SEARCH =================
 @bot.message_handler(func=lambda m: m.text == "🔎 Пошук")
-def ask(message):
-    msg = bot.send_message(message.chat.id, "Введи назву:")
+def ask(m):
+    msg = bot.send_message(m.chat.id, "Назва:")
     bot.register_next_step_handler(msg, search)
 
 
-def search(message):
-    uid = str(message.chat.id)
+def search(m):
+    uid = str(m.chat.id)
     init(uid)
 
-    tracks = search_spotify(message.text)
-
-    if not tracks:
-        bot.send_message(message.chat.id, "❌ Нічого")
+    if not can_search(uid):
+        bot.send_message(m.chat.id, "⛔ Ліміт 5/день")
         return
 
+    tracks = search_spotify(m.text)
+
+    data[uid]["searches"] += 1
+
     for t in tracks:
+
         title = t["name"]
         artist = t["artists"][0]["name"]
         cover = t["album"]["images"][0]["url"]
@@ -178,13 +210,13 @@ def search(message):
         preview = t.get("preview_url")
 
         kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("▶️ Spotify", url=url))
+        kb.add(types.InlineKeyboardButton("🎧 Spotify", url=url))
 
         if preview:
-            kb.add(types.InlineKeyboardButton("🎧 Stream", callback_data=preview))
+            kb.add(types.InlineKeyboardButton("▶️ Stream", callback_data=preview))
 
         bot.send_photo(
-            message.chat.id,
+            m.chat.id,
             cover,
             caption=f"🎵 {title}\n👤 {artist}",
             reply_markup=kb
@@ -195,88 +227,107 @@ def search(message):
     save(data)
 
 
-# ================= STREAM =================
-@bot.callback_query_handler(func=lambda c: True)
+# ================= CALLBACK STREAM =================
+@bot.callback_query_handler(func=lambda c: c.data.startswith("http"))
 def stream(call):
-
-    uid = str(call.message.chat.id)
-    init(uid)
-
-    if call.data.startswith("http"):
-        bot.send_audio(call.message.chat.id, call.data)
+    bot.send_audio(call.message.chat.id, call.data)
 
 
-# ================= LIKE SYSTEM =================
+# ================= LIKE =================
 @bot.message_handler(func=lambda m: m.text == "❤️ Лайки")
-def likes(message):
-    uid = str(message.chat.id)
+def likes(m):
+    uid = str(m.chat.id)
     init(uid)
 
     for l in data[uid]["likes"][-10:]:
-        bot.send_message(message.chat.id, f"❤️ {l}")
+        bot.send_message(m.chat.id, l)
 
 
 # ================= AUTOPLAY =================
 @bot.message_handler(func=lambda m: m.text == "🎧 Автоплей")
-def autoplay(message):
-    uid = str(message.chat.id)
+def auto(m):
+    uid = str(m.chat.id)
     init(uid)
 
     data[uid]["autoplay"] = not data[uid]["autoplay"]
     save(data)
 
-    bot.send_message(message.chat.id, f"🎧 Autoplay: {data[uid]['autoplay']}")
+    bot.send_message(m.chat.id, f"🎧 {data[uid]['autoplay']}")
 
 
 # ================= RECOMMEND =================
 @bot.message_handler(func=lambda m: m.text == "🧠 Рекомендації")
-def rec(message):
+def rec(m):
 
-    tracks = search_spotify("pop")
-    t = random.choice(tracks)
+    t = random.choice(search_spotify("pop"))
 
-    bot.send_message(message.chat.id,
+    bot.send_message(m.chat.id,
                      f"🧠 {t['name']} - {t['artists'][0]['name']}")
+
+
+# ================= GAME =================
+@bot.message_handler(func=lambda m: m.text == "🎮 Гра")
+def game(m):
+
+    t = random.choice(search_spotify("rock"))
+
+    user_game[m.chat.id] = t
+
+    bot.send_audio(m.chat.id, t["preview_url"])
+    bot.send_message(m.chat.id, "🎮 Вгадай")
+
+
+@bot.message_handler(func=lambda m: m.chat.id in user_game)
+def guess(m):
+
+    c = user_game[m.chat.id]["artists"][0]["name"].lower()
+
+    if c in m.text.lower():
+        bot.send_message(m.chat.id, "✅")
+    else:
+        bot.send_message(m.chat.id, f"❌ {c}")
+
+    del user_game[m.chat.id]
 
 
 # ================= PREMIUM =================
 @bot.message_handler(func=lambda m: m.text == "💎 Premium")
-def premium(message):
+def premium(m):
 
-    prices = [types.LabeledPrice("Premium 30 днів", 100)]
+    prices = [types.LabeledPrice("Premium", 100)]
 
     bot.send_invoice(
-        chat_id=message.chat.id,
-        title="Premium",
-        description="Безліміт музики",
-        invoice_payload="premium",
-        provider_token="",
-        currency="XTR",
-        prices=prices
+        m.chat.id,
+        "Premium",
+        "30 днів",
+        "premium",
+        "",
+        "XTR",
+        prices
     )
 
 
 @bot.pre_checkout_query_handler(func=lambda q: True)
-def checkout(q):
+def pre(q):
     bot.answer_pre_checkout_query(q.id, ok=True)
 
 
-@bot.message_handler(content_types=['successful_payment'])
-def success(message):
-    add_premium(message.chat.id, 30)
-    bot.send_message(message.chat.id, "💎 Premium активовано")
+@bot.message_handler(content_types=["successful_payment"])
+def pay(m):
+    add_premium(m.chat.id, 30)
+    bot.send_message(m.chat.id, "💎 OK")
 
 
 # ================= STATS =================
 @bot.message_handler(func=lambda m: m.text == "📊 Статистика")
-def stats(message):
-    uid = str(message.chat.id)
+def stats(m):
+
+    uid = str(m.chat.id)
     init(uid)
 
-    bot.send_message(message.chat.id, f"""
-📊
+    bot.send_message(m.chat.id,
+                     f"👥 {total_users()}\n💎 {is_premium(uid)}")
 
-👥 Users: {total_users()}
-💎 Premium: {is_premium(uid)}
-❤️ Likes: {len(data[uid]['likes'])}
-""")
+
+# ================= RUN =================
+bot.polling(none_stop=True)
