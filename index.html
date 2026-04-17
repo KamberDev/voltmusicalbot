@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Volt Music</title>
+</head>
+
+<body style="background:#111;color:white;font-family:Arial">
+
+<h1>🎧 VOLT MUSIC</h1>
+
+<input id="q" placeholder="Search">
+<button onclick="go()">Search</button>
+
+<div id="res"></div>
+
+<script>
+async function go(){
+    let q = document.getElementById("q").value
+
+    let r = await fetch("/search?q=" + q)
+    let d = await r.json()
+
+    let html = ""
+
+    d.forEach(t=>{
+        html += `
+        <div style="margin:10px;padding:10px;background:#222">
+            <img src="${t.album.images[0].url}" width="80">
+            <b>${t.name}</b><br>
+            ${t.artists[0].name}<br>
+            <a href="${t.external_urls.spotify}" target="_blank">▶ Play</a>
+        </div>
+        `
+    })
+
+    document.getElementById("res").innerHTML = html
+}
+</script>
+
+</body>
+</html>
