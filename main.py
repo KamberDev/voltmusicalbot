@@ -11,26 +11,45 @@ ADMIN_ID = 8307540389
 bot = telebot.TeleBot(TOKEN)
 
 DATA_FILE = "data.json"
-PREMIUM_PRICE = 100  # ⭐ Stars
+TRACKS_FILE = "tracks.json"
+PREMIUM_PRICE = 100
 
 
-# ================= DATA =================
-def load_data():
-    if not os.path.exists(DATA_FILE):
-        return {}
-    with open(DATA_FILE, "r") as f:
+# ================= LOAD =================
+def load_json(file, default):
+    if not os.path.exists(file):
+        return default
+    with open(file, "r") as f:
         return json.load(f)
 
 
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
+def save_json(file, data):
+    with open(file, "w") as f:
         json.dump(data, f)
 
 
-data = load_data()
+data = load_json(DATA_FILE, {})
+tracks = load_json(TRACKS_FILE, [])
 
 
-# ================= SUB CHECK (ONLY SYSTEM) =================
+# ================= SAVE TRACKS FROM CHANNEL =================
+@bot.channel_post_handler(content_types=['audio'])
+def save_music(message):
+    if message.chat.username != CHANNEL.replace("@", ""):
+        return
+
+    track = {
+        "title": message.audio.title or "Unknown",
+        "file_id": message.audio.file_id
+    }
+
+    tracks.append(track)
+    save_json(TRACKS_FILE, tracks)
+
+    print("Saved:", track["title"])
+
+
+# ================= SUB CHECK =================
 def is_subscribed(user_id):
     try:
         m = bot.get_chat_member(CHANNEL, user_id)
@@ -43,29 +62,11 @@ def is_premium(uid):
     return data.get(uid, {}).get("premium", False)
 
 
-# ================= GET MUSIC FROM CHANNEL =================
-def get_tracks():
-    tracks = []
-    updates = bot.get_updates(limit=100)
-
-    for u in updates:
-        if u.channel_post and u.channel_post.audio:
-            p = u.channel_post
-
-            if p.chat.username == CHANNEL.replace("@", ""):
-                tracks.append({
-                    "title": p.audio.title or "Unknown",
-                    "file_id": p.audio.file_id
-                })
-
-    return tracks
-
-
 # ================= MENU =================
 def menu():
     m = types.ReplyKeyboardMarkup(resize_keyboard=True)
     m.add("🎧 Плеєр", "🎲 Random")
-    m.add("💎 Premium")
+    m.add("📊 Статистика", "💎 Premium")
     return m
 
 
@@ -77,31 +78,26 @@ def start(message):
         markup.add(types.InlineKeyboardButton("📢 Підписатись", url=f"https://t.me/{CHANNEL.replace('@','')}"))
         markup.add(types.InlineKeyboardButton("🔄 Перевірити", callback_data="check"))
 
-        bot.send_message(message.chat.id, "❗ Потрібна підписка", reply_markup=markup)
+        bot.send_message(message.chat.id, "❗ Підпишись на канал", reply_markup=markup)
         return
 
-    bot.send_message(message.chat.id, "🎧 Spotify Bot", reply_markup=menu())
+    bot.send_message(message.chat.id, "🎧 Volt Music Bot", reply_markup=menu())
 
 
-# ================= CHECK SUB =================
+# ================= CHECK =================
 @bot.callback_query_handler(func=lambda c: c.data == "check")
 def check(call):
     if is_subscribed(call.message.chat.id):
-        bot.send_message(call.message.chat.id, "✅ Доступ відкрито, /start")
+        bot.send_message(call.message.chat.id, "✅ Доступ відкрито /start")
     else:
-        bot.send_message(call.message.chat.id, "❌ Ти не підписаний")
+        bot.send_message(call.message.chat.id, "❌ Не підписаний")
 
 
 # ================= PLAYER =================
 @bot.message_handler(func=lambda m: m.text == "🎧 Плеєр")
 def player(message):
-    if not is_subscribed(message.chat.id):
-        return
-
-    tracks = get_tracks()
-
     if not tracks:
-        bot.send_message(message.chat.id, "❌ Нема музики")
+        bot.send_message(message.chat.id, "❌ Нема музики в каналі")
         return
 
     uid = str(message.chat.id)
@@ -111,7 +107,7 @@ def player(message):
     data[uid]["index"] = 0
     data[uid].setdefault("likes", [])
 
-    save_data(data)
+    save_json(DATA_FILE, data)
 
     send_track(message.chat.id)
 
@@ -136,11 +132,6 @@ def send_track(chat_id):
 # ================= RANDOM =================
 @bot.message_handler(func=lambda m: m.text == "🎲 Random")
 def random_track(message):
-    if not is_subscribed(message.chat.id):
-        return
-
-    tracks = get_tracks()
-
     if not tracks:
         bot.send_message(message.chat.id, "❌ Пусто")
         return
@@ -152,11 +143,25 @@ def random_track(message):
     bot.send_audio(message.chat.id, t["file_id"], title=t["title"])
 
 
+# ================= STATS =================
+@bot.message_handler(func=lambda m: m.text == "📊 Статистика")
+def stats(message):
+    uid = str(message.chat.id)
+
+    prem = "💎 Так" if is_premium(uid) else "❌ Ні"
+    stars = data.get(uid, {}).get("stars", 0)
+
+    bot.send_message(
+        message.chat.id,
+        f"📊 Статистика\n\n💎 Premium: {prem}\n⭐ Stars: {stars}"
+    )
+
+
 # ================= PREMIUM =================
 @bot.message_handler(func=lambda m: m.text == "💎 Premium")
 def premium(message):
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("💰 Купити Premium", callback_data="buy"))
+    markup.add(types.InlineKeyboardButton("💰 Купити", callback_data="buy"))
 
     bot.send_message(message.chat.id, "💎 Premium", reply_markup=markup)
 
@@ -186,8 +191,9 @@ def success(message):
 
     data.setdefault(uid, {})
     data[uid]["premium"] = True
+    data[uid]["stars"] = data[uid].get("stars", 0) + PREMIUM_PRICE
 
-    save_data(data)
+    save_json(DATA_FILE, data)
 
     bot.send_message(message.chat.id, "💎 Premium активовано!")
 
@@ -218,7 +224,7 @@ def buttons(call):
         t = queue[state["index"]]
         bot.send_audio(uid, t["file_id"], title=t["title"])
 
-    save_data(data)
+    save_json(DATA_FILE, data)
     send_track(uid)
 
 
