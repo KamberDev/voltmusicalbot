@@ -1,13 +1,12 @@
 import telebot
 from telebot import types
-from youtubesearchpython import VideosSearch
 import yt_dlp
 import json
 import os
 import threading
 import hashlib
 
-TOKEN = "8751370568:AAEKV-ZWHwQAXlktBBMrB29AomHCYdXKE6E"
+TOKEN = "8751370568:AAGOvEC4nMTyrD9fsz956RD_e6GpAhV_IvA"
 CHANNEL_LINK = "https://t.me/voltmusical"
 CHANNEL_USERNAME = "@voltmusical"
 
@@ -38,7 +37,6 @@ def menu():
     markup.add("🔎 Знайти музику", "🎶 Плейлист")
     return markup
 
-# 🔒 підписка
 def check_sub(user_id):
     if user_id in data["users"]:
         return True
@@ -52,7 +50,6 @@ def check_sub(user_id):
         pass
     return False
 
-# 🚀 старт
 @bot.message_handler(commands=['start'])
 def start(message):
     markup = types.InlineKeyboardMarkup()
@@ -65,15 +62,13 @@ def start(message):
         reply_markup=markup
     )
 
-# ✅ перевірка
 @bot.callback_query_handler(func=lambda c: c.data == "check")
 def check(call):
     if check_sub(call.message.chat.id):
-        bot.send_message(call.message.chat.id, "✅ Доступ відкрито, користуйтесь ботом!", reply_markup=menu())
+        bot.send_message(call.message.chat.id, "✅ Доступ відкрито!", reply_markup=menu())
     else:
         bot.send_message(call.message.chat.id, "❌ Підпишись спочатку")
 
-# 🔎 кнопка пошуку
 @bot.message_handler(func=lambda m: m.text == "🔎 Знайти музику")
 def ask(message):
     if not check_sub(message.chat.id):
@@ -81,7 +76,6 @@ def ask(message):
     user_state[message.chat.id] = "search"
     bot.send_message(message.chat.id, "🎧 Введіть назву пісні")
 
-# 🎶 плейлист
 @bot.message_handler(func=lambda m: m.text == "🎶 Плейлист")
 def show_playlist(message):
     uid = str(message.chat.id)
@@ -97,7 +91,6 @@ def show_playlist(message):
 
     bot.send_message(message.chat.id, text)
 
-# 🔍 ПОШУК В ПОТОЦІ
 @bot.message_handler(func=lambda m: True)
 def search(message):
     if not check_sub(message.chat.id):
@@ -111,17 +104,20 @@ def search(message):
 
 def process_search(message):
     try:
-        vs = VideosSearch(message.text, limit=1)
-        res = vs.result()
+        ydl_opts = {'quiet': True, 'extract_flat': True}
 
-        if not res["result"]:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"ytsearch1:{message.text}", download=False)
+
+        if not info["entries"]:
             bot.send_message(message.chat.id, "❌ Не знайдено")
             return
 
-        v = res["result"][0]
-        title = v["title"]
-        url = v["link"]
-        thumb = v["thumbnails"][0]["url"]
+        video = info["entries"][0]
+
+        title = video["title"]
+        url = f"https://www.youtube.com/watch?v={video['id']}"
+        thumb = video.get("thumbnail", "")
 
         user_last[message.chat.id] = (title, url)
 
@@ -132,19 +128,17 @@ def process_search(message):
         )
         markup.add(types.InlineKeyboardButton("▶️ YouTube", url=url))
 
-        bot.send_photo(
-            message.chat.id,
-            thumb,
-            caption=f"🎵 {title}",
-            reply_markup=markup
-        )
+        if thumb:
+            bot.send_photo(message.chat.id, thumb, caption=f"🎵 {title}", reply_markup=markup)
+        else:
+            bot.send_message(message.chat.id, f"🎵 {title}\n{url}", reply_markup=markup)
 
-    except:
+    except Exception as e:
+        print(e)
         bot.send_message(message.chat.id, "❌ Помилка пошуку")
 
     user_state[message.chat.id] = None
 
-# 🚀 СКАЧУВАННЯ + КЕШ
 @bot.callback_query_handler(func=lambda c: c.data == "download")
 def download(call):
     bot.send_message(call.message.chat.id, "⚡ Обробка...")
@@ -162,17 +156,10 @@ def process_download(call):
     file_path = f"{CACHE_DIR}/{file_id}.mp3"
 
     try:
-        # якщо вже є файл
         if os.path.exists(file_path):
             with open(file_path, "rb") as audio:
                 bot.send_audio(call.message.chat.id, audio, title=title)
             return
-
-        # очистка кешу
-        files = os.listdir(CACHE_DIR)
-        if len(files) > 20:
-            for f in files[:10]:
-                os.remove(f"{CACHE_DIR}/{f}")
 
         ydl_opts = {
             'format': 'bestaudio/best',
@@ -195,10 +182,10 @@ def process_download(call):
         with open(file_path, "rb") as audio:
             bot.send_audio(call.message.chat.id, audio, title=title)
 
-    except:
+    except Exception as e:
+        print(e)
         bot.send_message(call.message.chat.id, "❌ Помилка скачування")
 
-# ❤️ плейлист
 @bot.callback_query_handler(func=lambda c: c.data == "add")
 def add(call):
     uid = str(call.message.chat.id)
