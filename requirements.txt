@@ -1,3 +1,2 @@
 pyTelegramBotAPI
-youtube-search-python
 yt-dlp
