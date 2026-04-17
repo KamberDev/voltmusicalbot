@@ -4,7 +4,7 @@ import json
 import os
 import random
 
-TOKEN = "8751370568:AAGOvEC4nMTyrD9fsz956RD_e6GpAhV_IvA"
+TOKEN = "8751370568:AAERob2JxbvqvUIg_eQWakXEGQANuYd7x_A"
 CHANNEL = "@voltmusical"
 ADMIN_ID = 8307540389
 
