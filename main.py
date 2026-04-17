@@ -11,6 +11,7 @@ ADMIN_ID = 8307540389
 bot = telebot.TeleBot(TOKEN)
 
 DATA_FILE = "data.json"
+PREMIUM_PRICE = 100  # ⭐ Stars
 
 
 # ================= DATA =================
@@ -30,16 +31,16 @@ data = load_data()
 
 
 # ================= CHECKS =================
-def is_verified(uid):
-    return data.get(uid, {}).get("verified", False)
-
-
 def is_subscribed(user_id):
     try:
-        member = bot.get_chat_member(CHANNEL, user_id)
-        return member.status in ["member", "administrator", "creator"]
+        m = bot.get_chat_member(CHANNEL, user_id)
+        return m.status in ["member", "administrator", "creator"]
     except:
         return False
+
+
+def is_verified(uid):
+    return data.get(uid, {}).get("verified", False)
 
 
 def is_premium(uid):
@@ -53,13 +54,13 @@ def is_banned(uid):
 # ================= TRACKS =================
 def get_tracks():
     tracks = []
-    updates = bot.get_updates(limit=200)
+    updates = bot.get_updates(limit=100)
 
     for u in updates:
-        if u.channel_post:
+        if u.channel_post and u.channel_post.audio:
             p = u.channel_post
 
-            if p.chat.username == CHANNEL.replace("@", "") and p.audio:
+            if p.chat.username == CHANNEL.replace("@", ""):
                 tracks.append({
                     "title": p.audio.title or "Unknown",
                     "file_id": p.audio.file_id
@@ -68,19 +69,27 @@ def get_tracks():
     return tracks
 
 
+# ================= MENU =================
+def menu():
+    m = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    m.add("🎧 Плеєр", "🎲 Random")
+    m.add("❤️ Лайки", "💎 Premium")
+    return m
+
+
 # ================= START =================
 @bot.message_handler(commands=['start'])
 def start(message):
     uid = str(message.chat.id)
 
     if is_banned(uid):
-        bot.send_message(message.chat.id, "🚫 Ban")
+        bot.send_message(message.chat.id, "🚫 Бан")
         return
 
     if not is_subscribed(message.chat.id):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📢 Підписатись", url=f"https://t.me/{CHANNEL.replace('@','')}"))
-        markup.add(types.InlineKeyboardButton("🔐 Verify", callback_data="verify"))
+        markup.add(types.InlineKeyboardButton("🔄 Перевірити", callback_data="check"))
 
         bot.send_message(message.chat.id, "❗ Спочатку підписка", reply_markup=markup)
         return
@@ -89,7 +98,7 @@ def start(message):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("🔐 Verify", callback_data="verify"))
 
-        bot.send_message(message.chat.id, "🔐 Одноразова перевірка", reply_markup=markup)
+        bot.send_message(message.chat.id, "🔐 One-time verify", reply_markup=markup)
         return
 
     bot.send_message(message.chat.id, "🎧 Spotify Bot", reply_markup=menu())
@@ -101,180 +110,98 @@ def verify(call):
     uid = str(call.message.chat.id)
 
     if not is_subscribed(call.message.chat.id):
-        bot.send_message(uid, "❌ Спочатку підпишись на канал")
+        bot.send_message(uid, "❌ Спочатку підписка")
         return
 
     data.setdefault(uid, {})
     data[uid]["verified"] = True
-    save_data(data)
-
-    bot.send_message(uid, "✅ Access granted")
-    bot.send_message(uid, "🎧 Menu:", reply_markup=menu())
-
-
-# ================= MENU =================
-def menu():
-    m = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    m.add("🎧 Пошук", "📊 Топ-10")
-    m.add("🎲 Discover", "❤️ Лайки")
-    if ADMIN_ID:
-        m.add("🛠 Admin")
-    return m
-
-
-# ================= SEARCH =================
-@bot.message_handler(func=lambda m: m.text == "🎧 Пошук")
-def ask(message):
-    uid = str(message.chat.id)
-    if not is_verified(uid):
-        return
-
-    msg = bot.send_message(message.chat.id, "🔎 Назва:")
-    bot.register_next_step_handler(msg, search)
-
-
-def search(message):
-    uid = str(message.chat.id)
-
-    if is_banned(uid):
-        return
-
-    query = message.text.lower()
-    tracks = get_tracks()
-
-    result = [t for t in tracks if query in t["title"].lower()]
-
-    if not result:
-        bot.send_message(message.chat.id, "❌ Не знайдено")
-        return
-
-    send_list(message.chat.id, result[:7])
-
-
-# ================= TOP =================
-@bot.message_handler(func=lambda m: m.text == "📊 Топ-10")
-def top(message):
-    if not is_verified(str(message.chat.id)):
-        return
-
-    tracks = get_tracks()[:10]
-
-    if not is_premium(str(message.chat.id)):
-        tracks = tracks[:5]
-
-    send_list(message.chat.id, tracks)
-
-
-# ================= DISCOVER =================
-@bot.message_handler(func=lambda m: m.text == "🎲 Discover")
-def discover(message):
-    if not is_verified(str(message.chat.id)):
-        return
-
-    tracks = get_tracks()
-    random.shuffle(tracks)
-
-    limit = 7 if is_premium(str(message.chat.id)) else 4
-
-    send_list(message.chat.id, tracks[:limit])
-
-
-# ================= LIKES =================
-@bot.message_handler(func=lambda m: m.text == "❤️ Лайки")
-def likes(message):
-    uid = str(message.chat.id)
-
-    likes = data.get(uid, {}).get("likes", [])
-
-    bot.send_message(message.chat.id, "❤️\n\n" + "\n".join(likes) if likes else "❌ Пусто")
-
-
-# ================= ADMIN =================
-@bot.message_handler(func=lambda m: m.text == "🛠 Admin")
-def admin(message):
-    if message.chat.id != ADMIN_ID:
-        return
-
-    m = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    m.add("💎 Premium", "🚫 Ban", "📊 Users")
-    bot.send_message(message.chat.id, "🛠 Admin Panel", reply_markup=m)
-
-
-# ================= USERS =================
-@bot.message_handler(func=lambda m: m.text == "📊 Users")
-def users(message):
-    if message.chat.id != ADMIN_ID:
-        return
-
-    text = "👥 Users:\n\n"
-    for uid, u in data.items():
-        text += f"{uid} | 💎 {u.get('premium', False)} | 🚫 {u.get('banned', False)}\n"
-
-    bot.send_message(message.chat.id, text)
-
-
-# ================= PREMIUM =================
-@bot.message_handler(func=lambda m: m.text == "💎 Premium")
-def premium(message):
-    if message.chat.id != ADMIN_ID:
-        return
-
-    msg = bot.send_message(message.chat.id, "User ID:")
-    bot.register_next_step_handler(msg, set_premium)
-
-
-def set_premium(message):
-    uid = message.text.strip()
-
-    data.setdefault(uid, {})
-    data[uid]["premium"] = not data[uid].get("premium", False)
-
-    save_data(data)
-
-    bot.send_message(message.chat.id, "💎 Updated")
-
-
-# ================= BAN =================
-@bot.message_handler(func=lambda m: m.text == "🚫 Ban")
-def ban(message):
-    if message.chat.id != ADMIN_ID:
-        return
-
-    msg = bot.send_message(message.chat.id, "User ID:")
-    bot.register_next_step_handler(msg, set_ban)
-
-
-def set_ban(message):
-    uid = message.text.strip()
-
-    data.setdefault(uid, {})
-    data[uid]["banned"] = True
-
-    save_data(data)
-
-    bot.send_message(message.chat.id, "🚫 Banned")
-
-
-# ================= LIST =================
-def send_list(chat_id, tracks):
-    uid = str(chat_id)
-
-    data.setdefault(uid, {})
-    data[uid]["tracks"] = tracks
+    data[uid].setdefault("queue", [])
     data[uid]["index"] = 0
     data[uid].setdefault("likes", [])
+    data[uid]["premium"] = False
 
     save_data(data)
 
-    send_track(chat_id)
+    bot.send_message(uid, "✅ Доступ відкрито")
+    bot.send_message(uid, "🎧 Меню", reply_markup=menu())
 
 
-# ================= TRACK =================
+# ================= CHECK =================
+@bot.callback_query_handler(func=lambda c: c.data == "check")
+def check(call):
+    if is_subscribed(call.message.chat.id):
+        bot.send_message(call.message.chat.id, "✅ OK /start")
+    else:
+        bot.send_message(call.message.chat.id, "❌ Не підписаний")
+
+
+# ================= PREMIUM (STARS) =================
+@bot.message_handler(func=lambda m: m.text == "💎 Premium")
+def premium_menu(message):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("💰 Купити Premium", callback_data="buy_premium"))
+
+    bot.send_message(message.chat.id, "💎 Premium доступ", reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda c: c.data == "buy_premium")
+def buy(call):
+    bot.send_invoice(
+        chat_id=call.message.chat.id,
+        title="Premium Spotify Bot",
+        description="VIP доступ до функцій",
+        invoice_payload="premium",
+        provider_token="",
+        currency="XTR",
+        prices=[types.LabeledPrice("Premium", PREMIUM_PRICE)],
+        start_parameter="premium"
+    )
+
+
+@bot.pre_checkout_query_handler(func=lambda q: True)
+def checkout(q):
+    bot.answer_pre_checkout_query(q.id, ok=True)
+
+
+@bot.message_handler(content_types=['successful_payment'])
+def success(message):
+    uid = str(message.chat.id)
+
+    data.setdefault(uid, {})
+    data[uid]["premium"] = True
+    save_data(data)
+
+    bot.send_message(message.chat.id, "💎 Premium активовано!")
+
+
+# ================= PLAYER =================
+@bot.message_handler(func=lambda m: m.text == "🎧 Плеєр")
+def player(message):
+    uid = str(message.chat.id)
+
+    if not is_subscribed(message.chat.id):
+        return
+
+    tracks = get_tracks()
+
+    if not tracks:
+        bot.send_message(message.chat.id, "❌ Нема музики")
+        return
+
+    data.setdefault(uid, {})
+    data[uid]["queue"] = tracks
+    data[uid]["index"] = 0
+
+    save_data(data)
+
+    send_track(message.chat.id)
+
+
 def send_track(chat_id):
     uid = str(chat_id)
     state = data.get(uid)
 
-    track = state["tracks"][state["index"]]
+    track = state["queue"][state["index"]]
 
     markup = types.InlineKeyboardMarkup()
     markup.add(
@@ -287,33 +214,61 @@ def send_track(chat_id):
     bot.send_message(chat_id, f"🎵 {track['title']}", reply_markup=markup)
 
 
+# ================= RANDOM =================
+@bot.message_handler(func=lambda m: m.text == "🎲 Random")
+def random_track(message):
+    tracks = get_tracks()
+
+    if not tracks:
+        bot.send_message(message.chat.id, "❌ Пусто")
+        return
+
+    limit = len(tracks) if is_premium(str(message.chat.id)) else 5
+
+    t = random.choice(tracks[:limit])
+
+    bot.send_audio(message.chat.id, t["file_id"], title=t["title"])
+
+
+# ================= LIKES =================
+@bot.message_handler(func=lambda m: m.text == "❤️ Лайки")
+def likes(message):
+    uid = str(message.chat.id)
+
+    likes = data.get(uid, {}).get("likes", [])
+
+    bot.send_message(message.chat.id, "\n".join(likes) if likes else "❌ Пусто")
+
+
 # ================= BUTTONS =================
 @bot.callback_query_handler(func=lambda c: True)
 def buttons(call):
     uid = str(call.message.chat.id)
-
     state = data.get(uid)
+
     if not state:
         return
 
+    queue = state.get("queue", [])
+
     if call.data == "next":
-        state["index"] = (state["index"] + 1) % len(state["tracks"])
+        state["index"] = (state["index"] + 1) % len(queue)
 
     elif call.data == "prev":
-        state["index"] = (state["index"] - 1) % len(state["tracks"])
+        state["index"] = (state["index"] - 1) % len(queue)
 
     elif call.data == "like":
-        track = state["tracks"][state["index"]]
-        state["likes"].append(track["title"])
-        bot.send_message(uid, "❤️ Saved")
+        t = queue[state["index"]]
+        state["likes"].append(t["title"])
+        bot.send_message(uid, "❤️ saved")
 
     elif call.data == "play":
-        track = state["tracks"][state["index"]]
-        bot.send_audio(uid, track["file_id"], title=track["title"])
+        t = queue[state["index"]]
+        bot.send_audio(uid, t["file_id"], title=t["title"])
 
     save_data(data)
     send_track(uid)
 
 
 # ================= RUN =================
-bot.polling()
+bot.polling(none_stop=True)
