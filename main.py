@@ -3,8 +3,8 @@ from telebot import types
 import yt_dlp
 import json
 import os
-import threading
 import hashlib
+import shutil
 
 TOKEN = "8751370568:AAGOvEC4nMTyrD9fsz956RD_e6GpAhV_IvA"
 CHANNEL_LINK = "https://t.me/voltmusical"
@@ -15,9 +15,9 @@ bot = telebot.TeleBot(TOKEN)
 DATA_FILE = "data.json"
 CACHE_DIR = "cache"
 
-if not os.path.exists(CACHE_DIR):
-    os.makedirs(CACHE_DIR)
+os.makedirs(CACHE_DIR, exist_ok=True)
 
+# ---------- DATA ----------
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {"users": [], "playlist": {}}
@@ -32,11 +32,13 @@ data = load_data()
 user_state = {}
 user_last = {}
 
+# ---------- MENU ----------
 def menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("🔎 Знайти музику", "🎶 Плейлист")
     return markup
 
+# ---------- SUB CHECK ----------
 def check_sub(user_id):
     if user_id in data["users"]:
         return True
@@ -50,6 +52,7 @@ def check_sub(user_id):
         pass
     return False
 
+# ---------- START ----------
 @bot.message_handler(commands=['start'])
 def start(message):
     markup = types.InlineKeyboardMarkup()
@@ -62,6 +65,7 @@ def start(message):
         reply_markup=markup
     )
 
+# ---------- CHECK SUB ----------
 @bot.callback_query_handler(func=lambda c: c.data == "check")
 def check(call):
     if check_sub(call.message.chat.id):
@@ -69,27 +73,13 @@ def check(call):
     else:
         bot.send_message(call.message.chat.id, "❌ Підпишись спочатку")
 
+# ---------- SEARCH ----------
 @bot.message_handler(func=lambda m: m.text == "🔎 Знайти музику")
 def ask(message):
     if not check_sub(message.chat.id):
         return
     user_state[message.chat.id] = "search"
     bot.send_message(message.chat.id, "🎧 Введіть назву пісні")
-
-@bot.message_handler(func=lambda m: m.text == "🎶 Плейлист")
-def show_playlist(message):
-    uid = str(message.chat.id)
-    pl = data["playlist"].get(uid, [])
-
-    if not pl:
-        bot.send_message(message.chat.id, "📭 Пусто")
-        return
-
-    text = "🎶 Плейлист:\n\n"
-    for i, t in enumerate(pl, 1):
-        text += f"{i}. {t['title']}\n"
-
-    bot.send_message(message.chat.id, text)
 
 @bot.message_handler(func=lambda m: True)
 def search(message):
@@ -100,9 +90,6 @@ def search(message):
 
     bot.send_message(message.chat.id, "🔎 Шукаю...")
 
-    threading.Thread(target=process_search, args=(message,)).start()
-
-def process_search(message):
     try:
         ydl_opts = {'quiet': True, 'extract_flat': True}
 
@@ -134,20 +121,21 @@ def process_search(message):
             bot.send_message(message.chat.id, f"🎵 {title}\n{url}", reply_markup=markup)
 
     except Exception as e:
-        print(e)
+        print("SEARCH ERROR:", e)
         bot.send_message(message.chat.id, "❌ Помилка пошуку")
 
     user_state[message.chat.id] = None
 
+# ---------- DOWNLOAD (FIXED) ----------
 @bot.callback_query_handler(func=lambda c: c.data == "download")
 def download(call):
-    bot.send_message(call.message.chat.id, "⚡ Обробка...")
-
-    threading.Thread(target=process_download, args=(call,)).start()
+    bot.send_message(call.message.chat.id, "⚡ Завантаження...")
+    process_download(call)
 
 def process_download(call):
     data_track = user_last.get(call.message.chat.id)
     if not data_track:
+        bot.send_message(call.message.chat.id, "❌ Немає треку")
         return
 
     title, url = data_track
@@ -177,15 +165,16 @@ def process_download(call):
 
         for f in os.listdir(CACHE_DIR):
             if f.startswith(file_id) and f.endswith(".mp3"):
-                os.rename(f"{CACHE_DIR}/{f}", file_path)
+                shutil.move(f"{CACHE_DIR}/{f}", file_path)
 
         with open(file_path, "rb") as audio:
             bot.send_audio(call.message.chat.id, audio, title=title)
 
     except Exception as e:
-        print(e)
+        print("DOWNLOAD ERROR:", e)
         bot.send_message(call.message.chat.id, "❌ Помилка скачування")
 
+# ---------- PLAYLIST ----------
 @bot.callback_query_handler(func=lambda c: c.data == "add")
 def add(call):
     uid = str(call.message.chat.id)
@@ -202,6 +191,22 @@ def add(call):
     data["playlist"][uid].append({"title": title, "url": url})
     save_data(data)
 
-    bot.send_message(call.message.chat.id, "❤️ Додано")
+    bot.send_message(call.message.chat.id, "❤️ Додано в плейлист")
 
+@bot.message_handler(func=lambda m: m.text == "🎶 Плейлист")
+def show_playlist(message):
+    uid = str(message.chat.id)
+    pl = data["playlist"].get(uid, [])
+
+    if not pl:
+        bot.send_message(message.chat.id, "📭 Плейлист пустий")
+        return
+
+    text = "🎶 Твій плейлист:\n\n"
+    for i, t in enumerate(pl, 1):
+        text += f"{i}. {t['title']}\n"
+
+    bot.send_message(message.chat.id, text)
+
+# ---------- RUN ----------
 bot.polling()
