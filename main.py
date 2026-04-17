@@ -1,49 +1,53 @@
 import telebot
 from telebot import types
 import yt_dlp
-import os
 import hashlib
-import shutil
 
 TOKEN = "8751370568:AAGOvEC4nMTyrD9fsz956RD_e6GpAhV_IvA"
 
 bot = telebot.TeleBot(TOKEN)
 
-CACHE_DIR = "cache"
-os.makedirs(CACHE_DIR, exist_ok=True)
-
 user_last = {}
 
-# ---------- MENU ----------
-def menu():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("🎵 Пошук музики")
-    return markup
+# ---------- AI "LOGIC" (простий інтелект без API) ----------
+def ai_parse(text):
+    text = text.lower()
+
+    moods = {
+        "sad": "sad emotional music",
+        "drift": "phonk drift music",
+        "gym": "gym workout music",
+        "love": "romantic music",
+        "chill": "chill music",
+        "rap": "rap music"
+    }
+
+    for key in moods:
+        if key in text:
+            return moods[key]
+
+    return text  # якщо нічого не знайдено — шукаємо як є
 
 # ---------- START ----------
 @bot.message_handler(commands=['start'])
 def start(message):
     bot.send_message(
         message.chat.id,
-        "🎧 SoundCloud Music Bot готовий",
-        reply_markup=menu()
+        "🤖🎧 AI Music Bot готовий\n\nНапиши: 'sad', 'gym', 'phonk' або назву треку"
     )
 
 # ---------- SEARCH ----------
-@bot.message_handler(func=lambda m: m.text == "🎵 Пошук музики")
-def ask(message):
-    msg = bot.send_message(message.chat.id, "🔎 Введи назву треку")
-    bot.register_next_step_handler(msg, search)
-
+@bot.message_handler(func=lambda m: True)
 def search(message):
-    query = message.text
-    bot.send_message(message.chat.id, "🔎 Шукаю...")
+    query = ai_parse(message.text)
+
+    bot.send_message(message.chat.id, f"🔎 AI шукає: {query}")
 
     try:
         ydl_opts = {
             'quiet': True,
             'noplaylist': True,
-            'default_search': 'scsearch1',  # 🔥 SOUND CLOUD SEARCH
+            'default_search': 'scsearch1',  # 🔥 SoundCloud
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -59,13 +63,13 @@ def search(message):
         url = track.get("webpage_url")
 
         if not url:
-            bot.send_message(message.chat.id, "❌ Немає посилання")
+            bot.send_message(message.chat.id, "❌ Немає URL")
             return
 
         user_last[message.chat.id] = (title, url)
 
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬇️ Завантажити MP3", callback_data="dl"))
+        markup.add(types.InlineKeyboardButton("▶️ Play / Download", callback_data="play"))
 
         bot.send_message(message.chat.id, f"🎵 {title}", reply_markup=markup)
 
@@ -73,10 +77,10 @@ def search(message):
         print("SEARCH ERROR:", repr(e))
         bot.send_message(message.chat.id, "❌ Помилка пошуку")
 
-# ---------- DOWNLOAD ----------
-@bot.callback_query_handler(func=lambda c: c.data == "dl")
-def download(call):
-    bot.send_message(call.message.chat.id, "⚡ Завантажую...")
+# ---------- PLAY / DOWNLOAD ----------
+@bot.callback_query_handler(func=lambda c: c.data == "play")
+def play(call):
+    bot.send_message(call.message.chat.id, "⚡ Готую трек...")
 
     data = user_last.get(call.message.chat.id)
     if not data:
@@ -85,18 +89,12 @@ def download(call):
     title, url = data
 
     file_id = hashlib.md5(url.encode()).hexdigest()
-    file_path = f"{CACHE_DIR}/{file_id}.mp3"
+    file_path = f"{file_id}.mp3"
 
     try:
-        # cache
-        if os.path.exists(file_path):
-            with open(file_path, "rb") as f:
-                bot.send_audio(call.message.chat.id, f, title=title)
-            return
-
         ydl_opts = {
             'format': 'bestaudio/best',
-            'outtmpl': f'{CACHE_DIR}/{file_id}.%(ext)s',
+            'outtmpl': f'{file_id}.%(ext)s',
             'quiet': True,
             'noplaylist': True,
             'http_headers': {
@@ -112,17 +110,12 @@ def download(call):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
-        # rename safe
-        for f in os.listdir(CACHE_DIR):
-            if f.startswith(file_id) and f.endswith(".mp3"):
-                shutil.move(f"{CACHE_DIR}/{f}", file_path)
-
-        with open(file_path, "rb") as f:
-            bot.send_audio(call.message.chat.id, f, title=title)
+        with open(file_path, "rb") as audio:
+            bot.send_audio(call.message.chat.id, audio, title=title)
 
     except Exception as e:
         print("DOWNLOAD ERROR:", repr(e))
-        bot.send_message(call.message.chat.id, "❌ Не вдалося завантажити")
+        bot.send_message(call.message.chat.id, "❌ Не вдалося відтворити трек")
 
 # ---------- RUN ----------
 bot.polling()
