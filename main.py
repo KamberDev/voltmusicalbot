@@ -59,13 +59,12 @@ def start(message):
     markup.add(types.InlineKeyboardButton("📢 Підписатись", url=CHANNEL_LINK))
     markup.add(types.InlineKeyboardButton("✅ Я підписався", callback_data="check"))
 
-    bot.send_message(
-        message.chat.id,
+    bot.send_message(message.chat.id,
         "👋 Підпишись на канал щоб користуватись ботом",
         reply_markup=markup
     )
 
-# ---------- CHECK SUB ----------
+# ---------- CHECK ----------
 @bot.callback_query_handler(func=lambda c: c.data == "check")
 def check(call):
     if check_sub(call.message.chat.id):
@@ -118,15 +117,15 @@ def search(message):
         if thumb:
             bot.send_photo(message.chat.id, thumb, caption=f"🎵 {title}", reply_markup=markup)
         else:
-            bot.send_message(message.chat.id, f"🎵 {title}\n{url}", reply_markup=markup)
+            bot.send_message(message.chat.id, f"🎵 {title}", reply_markup=markup)
 
     except Exception as e:
-        print("SEARCH ERROR:", e)
-        bot.send_message(message.chat.id, "❌ Помилка пошуку")
+        print("🔥 SEARCH ERROR:", repr(e))
+        bot.send_message(message.chat.id, f"❌ Помилка пошуку: {e}")
 
     user_state[message.chat.id] = None
 
-# ---------- DOWNLOAD (FIXED) ----------
+# ---------- DOWNLOAD ----------
 @bot.callback_query_handler(func=lambda c: c.data == "download")
 def download(call):
     bot.send_message(call.message.chat.id, "⚡ Завантаження...")
@@ -144,6 +143,7 @@ def process_download(call):
     file_path = f"{CACHE_DIR}/{file_id}.mp3"
 
     try:
+        # кеш
         if os.path.exists(file_path):
             with open(file_path, "rb") as audio:
                 bot.send_audio(call.message.chat.id, audio, title=title)
@@ -152,7 +152,11 @@ def process_download(call):
         ydl_opts = {
             'format': 'bestaudio/best',
             'outtmpl': f'{CACHE_DIR}/{file_id}.%(ext)s',
+            'noplaylist': True,
             'quiet': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0'
+            },
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -171,8 +175,8 @@ def process_download(call):
             bot.send_audio(call.message.chat.id, audio, title=title)
 
     except Exception as e:
-        print("DOWNLOAD ERROR:", e)
-        bot.send_message(call.message.chat.id, "❌ Помилка скачування")
+        print("🔥 DOWNLOAD ERROR FULL:", repr(e))
+        bot.send_message(call.message.chat.id, f"❌ Помилка скачування: {e}")
 
 # ---------- PLAYLIST ----------
 @bot.callback_query_handler(func=lambda c: c.data == "add")
@@ -191,7 +195,7 @@ def add(call):
     data["playlist"][uid].append({"title": title, "url": url})
     save_data(data)
 
-    bot.send_message(call.message.chat.id, "❤️ Додано в плейлист")
+    bot.send_message(call.message.chat.id, "❤️ Додано")
 
 @bot.message_handler(func=lambda m: m.text == "🎶 Плейлист")
 def show_playlist(message):
@@ -199,10 +203,10 @@ def show_playlist(message):
     pl = data["playlist"].get(uid, [])
 
     if not pl:
-        bot.send_message(message.chat.id, "📭 Плейлист пустий")
+        bot.send_message(message.chat.id, "📭 Пусто")
         return
 
-    text = "🎶 Твій плейлист:\n\n"
+    text = "🎶 Плейлист:\n\n"
     for i, t in enumerate(pl, 1):
         text += f"{i}. {t['title']}\n"
 
